@@ -13,13 +13,15 @@ const LoRaWANBand_t Region = AS923;
 
 LoRaWANNode node(&radio, &Region);//, subBand);
 
+#include "config.h"
+
 // EUIs specific to this Heltec node
-uint64_t joinEUI = 0x6B7DE864E65C8E74;
-uint64_t devEUI  = 0xCF6AF94F5F7BDB81;
+uint64_t joinEUI = RADIOLIB_LORAWAN_JOIN_EUI;
+uint64_t devEUI  = RADIOLIB_LORAWAN_DEV_EUI;
 
 // Using the same keys from node/config.h
-uint8_t appKey[] = { 0x78, 0x70, 0xC5, 0x8D, 0x30, 0xAD, 0xF1, 0x56, 0xBC, 0xBF, 0x08, 0x7A, 0xCC, 0x7A, 0xD6, 0xE4 };
-uint8_t nwkKey[] = { 0x9A, 0x31, 0xEC, 0x45, 0xEE, 0x0C, 0xF7, 0xA4, 0x36, 0xC9, 0xEF, 0x88, 0xEE, 0xD7, 0xD2, 0x01 };
+uint8_t appKey[] = { RADIOLIB_LORAWAN_APP_KEY };
+uint8_t nwkKey[] = { RADIOLIB_LORAWAN_NWK_KEY };
 
 #define LORAWAN_UPLINK_DATA_RATE  2
 #define LORAWAN_UPLINK_USER_PORT  2

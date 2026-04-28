@@ -21,3 +21,6 @@ lora_geo.db
 .vscode/
 .idea/
 *.swp
+
+# LoRaWAN Keys
+config.h
