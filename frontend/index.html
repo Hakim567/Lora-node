@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoRa Geo — Live Node Tracker</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <meta name="description"
+    content="Real-time LoRaWAN RSSI geolocation dashboard with gateway range visualisation on OpenStreetMap." />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div id="app">
+
+    <!-- ── Header ──────────────────────────────────────────── -->
+    <header>
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+            <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+            <circle cx="12" cy="20" r="1" fill="#fff" stroke="none" />
+          </svg>
+        </div>
+        <span>LoRa Geo</span>
+      </div>
+      <div class="header-right">
+        <div class="stat-chip">Gateways&nbsp;<span id="hdr-gw-count">0</span></div>
+        <div class="stat-chip">Nodes&nbsp;<span id="hdr-node-count">0</span></div>
+        <div class="hdr-divider"></div>
+        <div id="live-indicator">
+          <div class="live-dot" id="live-dot"></div>
+          <span id="live-text">Connecting…</span>
+        </div>
+        <div class="hdr-divider"></div>
+        <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+          <!-- Moon icon (shown in dark mode) -->
+          <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+          <!-- Sun icon (shown in light mode) -->
+          <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5" />
+            <line x1="12" y1="1" x2="12" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+            <line x1="1" y1="12" x2="3" y2="12" />
+            <line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Main ────────────────────────────────────────────── -->
+    <div class="content">
+
+      <!-- Map -->
+      <div id="map"></div>
+
+      <!-- Side Panel -->
+      <div id="panel">
+        <div class="panel-drag-handle"></div>
+        <div class="tabs">
+          <button class="tab-btn active" id="tab-gateways" onclick="switchTab('gateways')">Gateways</button>
+          <button class="tab-btn" id="tab-nodes" onclick="switchTab('nodes')">Nodes</button>
+          <button class="tab-btn" id="tab-model" onclick="switchTab('model')">Model</button>
+          <button class="tab-btn" id="tab-logs" onclick="switchTab('logs')">Logs</button>
+        </div>
+
+        <!-- ── Gateways Tab ───────────────────────────────── -->
+        <div class="tab-content active" id="content-gateways">
+          <div class="panel-section">
+            <div class="section-header">
+              <span class="section-title">Registered Gateways</span>
+              <button class="btn btn-primary btn-sm" onclick="toggleGatewayForm()">+ Add</button>
+            </div>
+
+            <div id="gateway-form-container">
+              <div class="form-title" id="form-title">Add Gateway</div>
+              <div class="form-group">
+                <label>Gateway EUI</label>
+                <input id="gw-id" type="text" placeholder="0016c001f153a14c" />
+              </div>
+              <div class="form-group">
+                <label>Name</label>
+                <input id="gw-name" type="text" placeholder="Rooftop GW 1" />
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Latitude</label>
+                  <input id="gw-lat" type="number" step="any" placeholder="3.1400" />
+                </div>
+                <div class="form-group">
+                  <label>Longitude</label>
+                  <input id="gw-lng" type="number" step="any" placeholder="101.6900" />
+                </div>
+              </div>
+              <div class="map-click-hint visible" id="map-click-hint">
+                ↖ Click on the map to set coordinates
+              </div>
+              <div class="form-actions">
+                <button class="btn btn-primary" onclick="submitGatewayForm()">Save</button>
+                <button class="btn btn-ghost" onclick="cancelGatewayForm()">Cancel</button>
+              </div>
+            </div>
+
+            <div id="gateway-list" style="margin-top: 12px;"></div>
+          </div>
+        </div>
+
+        <!-- ── Nodes Tab ──────────────────────────────────── -->
+        <div class="tab-content" id="content-nodes">
+          <div class="panel-section">
+            <div class="section-header">
+              <span class="section-title">Active Nodes</span>
+            </div>
+            <div id="node-list"></div>
+          </div>
+        </div>
+
+        <!-- ── Model Tab ──────────────────────────────────── -->
+        <div class="tab-content" id="content-model">
+          <div class="model-section">
+            <div class="model-card">
+              <div class="model-card-title">Path Loss Parameters</div>
+
+              <div class="slider-group">
+                <div class="slider-header">
+                  <span class="slider-label">RSSI at 1 m (ref)</span>
+                  <span class="slider-value" id="rssi-ref-val">−40 dBm</span>
+                </div>
+                <input type="range" id="rssi-ref-slider" min="-70" max="-20" step="1" value="-40"
+                  oninput="onSliderChange()" />
+              </div>
+
+              <div class="slider-group">
+                <div class="slider-header">
+                  <span class="slider-label">Path loss exponent (n)</span>
+                  <span class="slider-value" id="n-val">2.7</span>
+                </div>
+                <input type="range" id="n-slider" min="1.5" max="5.0" step="0.1" value="2.7"
+                  oninput="onSliderChange()" />
+              </div>
+
+              <div class="distance-preview">
+                <div class="preview-label">Predicted distance at given RSSI</div>
+                <div class="preview-values" id="preview-values"></div>
+              </div>
+
+              <div class="model-formula">
+                d = 10 ^ ( (RSSI_ref − RSSI) / (10 × n) )
+              </div>
+
+              <button class="btn btn-primary" style="width:100%; margin-top:14px; justify-content:center;"
+                onclick="applyModelParams()">Apply to Backend</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Logs Tab ──────────────────────────────────── -->
+        <div class="tab-content" id="content-logs">
+          <div class="panel-section" style="display: flex; flex-direction: column; height: 100%; padding: 0;">
+            <div class="section-header" style="padding: 14px 16px 0;">
+              <span class="section-title">API Traffic</span>
+              <button class="btn btn-ghost btn-sm" onclick="clearLogs()">Clear</button>
+            </div>
+            <div id="log-list" style="flex: 1; overflow-y: auto; padding: 10px 16px;"></div>
+          </div>
+        </div>
+
+      </div><!-- /panel -->
+    </div><!-- /content -->
+  </div><!-- /app -->
+
+  <!-- Mobile bottom-sheet backdrop -->
+  <div id="panel-backdrop" onclick="closeMobilePanel()"></div>
+
+  <!-- Mobile floating toggle button -->
+  <button id="panel-toggle-btn" onclick="toggleMobilePanel()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path id="toggle-icon-path" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+    <span id="toggle-btn-label">Panel</span>
+  </button>
+
+  <div id="toast-container"></div>
+
+  <script src="app.js?v=2"></script>
+</body>
+
+</html>
