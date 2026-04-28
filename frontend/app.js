@@ -3,20 +3,20 @@ const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8
 const POLL_INTERVAL = 5000; // ms
 
 const TILES = {
-  dark:  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+  dark: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+  light: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
 };
 
 /* ── Fetch Interceptor (Logs) ───────────────────────────────── */
 const originalFetch = window.fetch;
-window.fetch = async function(...args) {
+window.fetch = async function (...args) {
   const method = (args[1] && args[1].method) || 'GET';
   const url = typeof args[0] === 'string' ? args[0] : args[0].url;
   let path = url.replace(API_BASE_URL, '');
-  
+
   // Clean up cache buster from logs
   if (path.includes('?t=')) path = path.split('?t=')[0];
-  
+
   const startTime = performance.now();
   try {
     const response = await originalFetch(...args);
@@ -35,7 +35,7 @@ function addLog(method, path, status, duration) {
   if (!el) return;
   const entry = document.createElement('div');
   entry.className = 'log-entry';
-  const time = new Date().toLocaleTimeString([], {hour12: false});
+  const time = new Date().toLocaleTimeString([], { hour12: false });
   const statusClass = status >= 200 && status < 300 ? 'ok' : 'err';
   entry.innerHTML = `
     <div class="log-row-1"><span>${time}</span><span class="log-status ${statusClass}">${status} (${duration}ms)</span></div>
@@ -106,7 +106,8 @@ function initMap() {
   map = L.map('map', { zoomControl: false });
 
   tileLayer = L.tileLayer(getTileUrl(), {
-    attribution: '© OpenStreetMap contributors, © CARTO',
+    attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+    maxNativeZoom: 16,
     maxZoom: 19,
   }).addTo(map);
 
@@ -128,7 +129,7 @@ function initMap() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (p) => map.setView([p.coords.latitude, p.coords.longitude], 15),
-        ()  => map.setView([3.14, 101.69], 14)
+        () => map.setView([3.14, 101.69], 14)
       );
     } else {
       map.setView([3.14, 101.69], 14);
@@ -447,8 +448,8 @@ function renderGatewayList(gwList) {
     return;
   }
   // SVG icon helpers
-  const svgEdit   = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-  const svgTrash  = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+  const svgEdit = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+  const svgTrash = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
   const svgLocate = `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>`;
 
   el.innerHTML = gwList.map(gw => {
@@ -466,8 +467,8 @@ function renderGatewayList(gwList) {
       <div class="gw-card-id">${escHtml(gw.id)}</div>
       <div class="gw-card-coords ${hasCoords ? '' : 'no-coords'}">
         ${hasCoords
-          ? `<span class="coord-badge">${gw.latitude.toFixed(5)}</span> <span class="coord-badge">${gw.longitude.toFixed(5)}</span>`
-          : '<span>No coordinates — set them to show on map</span>'}
+        ? `<span class="coord-badge">${gw.latitude.toFixed(5)}</span> <span class="coord-badge">${gw.longitude.toFixed(5)}</span>`
+        : '<span>No coordinates — set them to show on map</span>'}
       </div>
     </div>`;
   }).join('');
@@ -580,10 +581,10 @@ function clearForm() {
 }
 
 async function submitGatewayForm() {
-  const id   = document.getElementById('gw-id').value.trim();
+  const id = document.getElementById('gw-id').value.trim();
   const name = document.getElementById('gw-name').value.trim();
-  const lat  = parseFloat(document.getElementById('gw-lat').value);
-  const lng  = parseFloat(document.getElementById('gw-lng').value);
+  const lat = parseFloat(document.getElementById('gw-lat').value);
+  const lng = parseFloat(document.getElementById('gw-lng').value);
 
   if (!name) { toast('Name is required', 'error'); return; }
 
@@ -645,7 +646,7 @@ async function fetchModelParams() {
 
 function onSliderChange() {
   const ref = parseFloat(document.getElementById('rssi-ref-slider').value);
-  const n   = parseFloat(document.getElementById('n-slider').value);
+  const n = parseFloat(document.getElementById('n-slider').value);
   document.getElementById('rssi-ref-val').textContent = `${ref} dBm`;
   document.getElementById('n-val').textContent = n.toFixed(1);
   updateDistancePreview(ref, n);
@@ -664,7 +665,7 @@ function updateDistancePreview(ref, n) {
 }
 
 async function applyModelParams() {
-  const rssi_ref    = parseFloat(document.getElementById('rssi-ref-slider').value);
+  const rssi_ref = parseFloat(document.getElementById('rssi-ref-slider').value);
   const path_loss_exp = parseFloat(document.getElementById('n-slider').value);
   try {
     const res = await fetch(`${API_BASE_URL}/api/config/range-model`, {
@@ -700,13 +701,13 @@ function toast(msg, type = 'success') {
 /* ── Helpers ────────────────────────────────────────────────── */
 function timeAgo(ts) {
   const secs = Math.round((Date.now() - new Date(ts + 'Z').getTime()) / 1000);
-  if (secs < 60)   return `${secs}s ago`;
+  if (secs < 60) return `${secs}s ago`;
   if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
   return `${Math.round(secs / 3600)}h ago`;
 }
 
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 /* ── Theme toggle ───────────────────────────────────────────── */
@@ -727,7 +728,7 @@ function toggleTheme() {
 }
 
 // Apply saved theme on load (before map init, so initMap picks right tile URL)
-(function() {
+(function () {
   if (localStorage.getItem('theme') === 'light') {
     document.documentElement.classList.add('light-mode');
   }
@@ -746,9 +747,9 @@ function openMobilePanel() {
   document.getElementById('panel-backdrop').classList.add('visible');
 
   const label = document.getElementById('toggle-btn-label');
-  const path  = document.getElementById('toggle-icon-path');
+  const path = document.getElementById('toggle-icon-path');
   if (label) label.textContent = 'Close';
-  if (path)  path.setAttribute('d', 'M18 6L6 18M6 6l12 12'); // X icon
+  if (path) path.setAttribute('d', 'M18 6L6 18M6 6l12 12'); // X icon
 }
 
 function closeMobilePanel() {
@@ -757,9 +758,9 @@ function closeMobilePanel() {
   document.getElementById('panel-backdrop').classList.remove('visible');
 
   const label = document.getElementById('toggle-btn-label');
-  const path  = document.getElementById('toggle-icon-path');
+  const path = document.getElementById('toggle-icon-path');
   if (label) label.textContent = 'Panel';
-  if (path)  path.setAttribute('d', 'M4 6h16M4 12h16M4 18h16'); // hamburger icon
+  if (path) path.setAttribute('d', 'M4 6h16M4 12h16M4 18h16'); // hamburger icon
 }
 
 // On window resize: if switching back to desktop, ensure panel state is clean
