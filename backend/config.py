@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Database
 DB_PATH = os.getenv("DB_PATH", "lora_geo.db")
