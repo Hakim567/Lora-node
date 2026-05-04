@@ -29,10 +29,70 @@ uint16_t uplinkPayloadLen = 0;
 
 uint32_t previousMillis = 0;
 
+#define RADIOLIB_SESSION_EEPROM_ADDR 64
+
+void saveSession() {
+  uint8_t *noncesBuffer = node.getBufferNonces();
+  uint8_t *sessionBuffer = node.getBufferSession();
+  
+  EEPROM.write(RADIOLIB_SESSION_EEPROM_ADDR, 0xAA); // Magic byte indicating valid saved data
+  int addr = RADIOLIB_SESSION_EEPROM_ADDR + 1;
+  
+  for (size_t i = 0; i < RADIOLIB_LORAWAN_NONCES_BUF_SIZE; i++) {
+    EEPROM.write(addr++, noncesBuffer[i]);
+  }
+  for (size_t i = 0; i < RADIOLIB_LORAWAN_SESSION_BUF_SIZE; i++) {
+    EEPROM.write(addr++, sessionBuffer[i]);
+  }
+  EEPROM.commit();
+  Serial.println("Session & Nonces saved to EEPROM");
+}
+
+void joinNetwork() {
+  node.beginOTAA(joinEUI, devEUI, nwkKey, appKey);
+  
+  if (EEPROM.read(RADIOLIB_SESSION_EEPROM_ADDR) == 0xAA) {
+    uint8_t noncesBuffer[RADIOLIB_LORAWAN_NONCES_BUF_SIZE];
+    uint8_t sessionBuffer[RADIOLIB_LORAWAN_SESSION_BUF_SIZE];
+    int addr = RADIOLIB_SESSION_EEPROM_ADDR + 1;
+    
+    for (size_t i = 0; i < RADIOLIB_LORAWAN_NONCES_BUF_SIZE; i++) {
+      noncesBuffer[i] = EEPROM.read(addr++);
+    }
+    for (size_t i = 0; i < RADIOLIB_LORAWAN_SESSION_BUF_SIZE; i++) {
+      sessionBuffer[i] = EEPROM.read(addr++);
+    }
+    node.setBufferNonces(noncesBuffer);
+    node.setBufferSession(sessionBuffer);
+    Serial.println("Restoring session from EEPROM...");
+  } else {
+    Serial.println("No saved session. Join ('login') the LoRaWAN Network...");
+  }
+
+  while (1) {
+    int16_t state = node.activateOTAA();
+    if (state == RADIOLIB_LORAWAN_NEW_SESSION) {
+      Serial.println("Joined completely new session!");
+      saveSession();
+      break;
+    } else if (state == RADIOLIB_LORAWAN_SESSION_RESTORED) {
+      Serial.println("Session successfully restored!");
+      break;
+    }
+    debug(true, F("Join failed"), state, false); // Don't freeze on fail during auto-rejoin
+    delay(15000);
+  }
+  
+  node.setADR(false);
+  node.setDatarate(LORAWAN_UPLINK_DATA_RATE);
+  node.setDutyCycle(false);
+  node.setDwellTime(false);
+}
+
 void setup() {
   Serial.begin(115200);
 
-  if (!EEPROM.begin(LORAWAN_DEV_INFO_SIZE)) {
+  if (!EEPROM.begin(512)) {
     Serial.println("Failed to initialize EEPROM");
     while (1);
   }
@@ -53,21 +113,8 @@ void setup() {
   // SX1262 rf switch order: setRfSwitchPins(rxEn, txEn);
   radio.setRfSwitchPins(38, RADIOLIB_NC);
 
-  // Setup the OTAA session information
-  node.beginOTAA(joinEUI, devEUI, nwkKey, appKey);
-  Serial.println(F("Join ('login') the LoRaWAN Network"));
-
-  while (1) {
-    state = node.activateOTAA(LORAWAN_UPLINK_DATA_RATE);
-    if (state == RADIOLIB_LORAWAN_NEW_SESSION) break;
-    debug(state != RADIOLIB_LORAWAN_NEW_SESSION, F("Join failed"), state, true);
-    delay(15000);
-  }
-
-  node.setADR(false);
-  node.setDatarate(LORAWAN_UPLINK_DATA_RATE);
-  node.setDutyCycle(false);
-  node.setDwellTime(false);
+  // Execute the persistent join logic
+  joinNetwork();
 
   Serial.println(F("Ready!\n"));
 
@@ -120,6 +167,10 @@ void loop() {
   int16_t state = node.sendReceive(uplinkPayload, uplinkPayloadLen, LORAWAN_UPLINK_USER_PORT);
   if (state == RADIOLIB_LORAWAN_DOWNLINK || state == RADIOLIB_ERR_NONE) {
     Serial.println("Uplink successful!");
+    saveSession(); // Save session (frame counters) after successful send
+  } else if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
+    Serial.println("Network not joined (-1101)! Rejoining...");
+    joinNetwork();
   } else {
     Serial.print("Error in sendReceive: ");
     Serial.println(state);
