@@ -19,10 +19,10 @@ class Node(SQLModel, table=True):
 
 class Reading(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    node_id: str = Field(foreign_key="node.id")
-    gateway_id: str = Field(foreign_key="gateway.id")
+    node_id: str = Field(foreign_key="node.id", index=True)
+    gateway_id: str = Field(foreign_key="gateway.id", index=True)
     rssi: float
     snr: Optional[float] = None
     predicted_distance: Optional[float] = None  # metres, computed from RSSI
     battery_level: Optional[float] = None       # % — reserved for future ADC read
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
