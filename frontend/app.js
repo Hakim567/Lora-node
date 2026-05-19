@@ -430,12 +430,16 @@ function buildGwPopup(gw, readings) {
 }
 
 function buildReadingPopup(r) {
+  const batRow = r.battery_level != null
+    ? `<div class="popup-row"><span>Battery</span><span>${Math.round(r.battery_level)}%</span></div>`
+    : '';
   return `<div class="popup-content">
     <h3>📦 ${escHtml(r.node_name)}</h3>
     <div class="popup-row"><span>Gateway</span><span>${escHtml(r.gateway_name)}</span></div>
     <div class="popup-row"><span>RSSI</span><span>${r.rssi} dBm</span></div>
     <div class="popup-row"><span>SNR</span><span>${r.snr != null ? r.snr + ' dB' : 'N/A'}</span></div>
     <div class="popup-row"><span>Est. distance</span><span>~${Math.round(r.predicted_distance)} m</span></div>
+    ${batRow}
     <div class="popup-row"><span>Last seen</span><span>${timeAgo(r.timestamp)}</span></div>
   </div>`;
 }
@@ -494,6 +498,21 @@ function renderNodeList(readings) {
     const ageSecs = (Date.now() - new Date(r.timestamp + 'Z').getTime()) / 1000;
     const ageClass = ageSecs < 60 ? '' : 'stale';
     const dotColor = ageSecs < 60 ? getNodeColor(r.node_id) : '#64748b';
+
+    // Battery indicator — only rendered when battery_level is present
+    const batIndicator = r.battery_level != null ? (() => {
+      const pct   = Math.round(r.battery_level);
+      const color = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--orange)' : 'var(--red)';
+      // SVG battery: body 20×11, nub 2.5×5, fill scales with pct (max fill-width = 16)
+      const fillW = Math.max(0, (pct / 100) * 16).toFixed(1);
+      const icon  = `<svg class="bat-icon" viewBox="0 0 24 12" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0.5" y="0.5" width="20" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <rect x="21.5" y="3.5" width="2" height="5" rx="1" fill="currentColor"/>
+        <rect x="2" y="2" width="${fillW}" height="8" rx="1" fill="currentColor"/>
+      </svg>`;
+      return `<div class="bat-indicator" style="color:${color}">${icon}<span>${pct}%</span></div>`;
+    })() : '';
+
     return `
     <div class="node-card">
       <div class="node-card-header">
@@ -501,7 +520,10 @@ function renderNodeList(readings) {
           <span class="node-color-dot" style="background:${dotColor};box-shadow:0 0 6px ${dotColor};"></span>
           <div class="node-card-name">${escHtml(r.node_name)}</div>
         </div>
-        <div class="age-badge ${ageClass}">${timeAgo(r.timestamp)}</div>
+        <div class="node-card-right">
+          ${batIndicator}
+          <div class="age-badge ${ageClass}">${timeAgo(r.timestamp)}</div>
+        </div>
       </div>
       <div class="node-card-eui">${escHtml(r.node_id)}</div>
       <div class="rssi-bar-wrap">

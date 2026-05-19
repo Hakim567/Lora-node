@@ -756,6 +756,29 @@ header {
   background: linear-gradient(90deg, var(--red), var(--orange), #22c55e);
 }
 
+/* ── Battery indicator (icon + %) ───────────────────────────── */
+.node-card-right {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.bat-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.69rem;
+  font-weight: 500;
+  transition: color 0.4s ease;
+}
+
+.bat-icon {
+  width: 20px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
 .node-stats {
   display: flex;
   gap: 6px;

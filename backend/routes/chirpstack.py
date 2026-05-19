@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session
 from datetime import datetime
+import base64
 import collections
 import time
 
@@ -45,6 +46,33 @@ async def chirpstack_uplink(
     if not rx_info_list or not node_id:
         return {"status": "skipped", "reason": "missing devEui or rxInfo"}
 
+    # ── Parse battery level from uplink payload ────────────────────
+    # Heltec payload layout: [tempH][tempL][humH][humL][battery%]
+    # Byte index 4 carries battery % (0–100). Not present on Xiao uplinks,
+    # so battery_level stays None and is stored as NULL — harmless.
+    battery_level = None
+
+    # Option 1: ChirpStack codec may already decode a "battery" field
+    object_data = body.get("object", {})
+    if isinstance(object_data, dict) and "battery" in object_data:
+        try:
+            battery_level = float(object_data["battery"])
+        except (TypeError, ValueError):
+            pass
+
+    # Option 2: parse raw bytes from the base64-encoded "data" field
+    if battery_level is None:
+        raw_b64 = body.get("data", "")
+        if raw_b64:
+            try:
+                raw_bytes = base64.b64decode(raw_b64)
+                if len(raw_bytes) >= 5:
+                    val = raw_bytes[4]
+                    if 0 <= val <= 100:
+                        battery_level = float(val)
+            except Exception:
+                pass
+
     # Auto-register / update node
     node = session.get(Node, node_id)
     if not node:
@@ -76,6 +104,7 @@ async def chirpstack_uplink(
             rssi=rssi,
             snr=snr,
             predicted_distance=distance,
+            battery_level=battery_level,
             timestamp=datetime.utcnow(),
         )
         session.add(reading)

@@ -25,12 +25,46 @@ uint8_t nwkKey[] = { RADIOLIB_LORAWAN_NWK_KEY };
 
 #define LORAWAN_UPLINK_DATA_RATE  2
 #define LORAWAN_UPLINK_USER_PORT  2
-#define LORAWAN_UPLINK_PERIOD     10000 // ms
+#define LORAWAN_UPLINK_PERIOD_S   60          // seconds between uplinks
+#define LORAWAN_UPLINK_PERIOD_US  (LORAWAN_UPLINK_PERIOD_S * 1000000ULL)
+
+// ── Battery ADC (Heltec WiFi LoRa 32 V3) ────────────────────────
+// The board has a built-in voltage divider: VBAT → R1(390k) → GPIO1 → R2(100k) → GND
+// GPIO37 is the control pin — pull LOW to enable the divider, HIGH to disable it.
+#define VBAT_ADC_PIN   1
+#define VBAT_CTRL_PIN  37
+#define VBAT_MIN       3.0f   // battery considered empty (V)
+#define VBAT_MAX       4.2f   // battery considered full  (V)
 
 #include <Preferences.h>
 Preferences prefs;
 
-uint32_t previousMillis = 0;
+// ── Read battery percentage (0–100) ─────────────────────────────
+uint8_t readBatteryPercent() {
+  pinMode(VBAT_CTRL_PIN, OUTPUT);
+  digitalWrite(VBAT_CTRL_PIN, LOW);   // enable divider
+  delay(10);                           // let ADC settle
+
+  // Average 8 samples to reduce ADC noise
+  int32_t raw = 0;
+  for (int i = 0; i < 8; i++) {
+    raw += analogRead(VBAT_ADC_PIN);
+    delay(2);
+  }
+  raw /= 8;
+
+  digitalWrite(VBAT_CTRL_PIN, HIGH);  // disable divider to save power
+
+  // V_adc = (raw / 4095) * 3.3V
+  // V_bat = V_adc * ((390k + 100k) / 100k) = V_adc * 4.9
+  float voltage = (raw / 4095.0f) * 3.3f * 4.9f;
+
+  // Map voltage to 0–100%
+  float pct = (voltage - VBAT_MIN) / (VBAT_MAX - VBAT_MIN) * 100.0f;
+  if (pct < 0.0f)   pct = 0.0f;
+  if (pct > 100.0f) pct = 100.0f;
+  return (uint8_t)pct;
+}
 
 void saveSession() {
   uint8_t *noncesBuffer = node.getBufferNonces();
@@ -105,51 +139,53 @@ void setup() {
 
   // Execute the persistent join logic
   joinNetwork();
-  
-  Serial.println("Ready!\n");
+
+  // ── Read battery level ───────────────────────────────────────
+  uint8_t batPct = readBatteryPercent();
+  Serial.printf("Battery: %u%%\n", batPct);
+
+  // ── Build payload: [tempH][tempL][humH][humL][battery%] ──────
+  // Bytes 0-1: temperature (placeholder, x10, signed int16)
+  // Bytes 2-3: humidity    (placeholder, x10, uint16)
+  // Byte  4:   battery %   (0-100)
+  uint8_t uplinkPayload[5] = {0};
+  uint16_t tempDecimal = 5;
+  uint16_t humDecimal  = 10;
+  uplinkPayload[0] = (tempDecimal >> 8);
+  uplinkPayload[1] = tempDecimal & 0xFF;
+  uplinkPayload[2] = (humDecimal >> 8);
+  uplinkPayload[3] = humDecimal & 0xFF;
+  uplinkPayload[4] = batPct;
+
+  display.clear();
+  display.println("Sending uplink...");
+  display.printf("Battery: %u%%\n", batPct);
+  Serial.println("Sending uplink");
+
+  state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), LORAWAN_UPLINK_USER_PORT);
+  if (state == RADIOLIB_ERR_NONE || state == RADIOLIB_LORAWAN_DOWNLINK) {
+    display.println("TX Success!");
+    Serial.println("Sending uplink successful!");
+    saveSession();
+  } else if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
+    display.println("Lost Network!");
+    Serial.println("Network not joined (-1101)! Rejoining...");
+    // Rejoin will happen on next wake cycle
+  } else {
+    display.printf("TX fail: %i\n", state);
+    Serial.printf("Error in sendReceive: %i\n", state);
+  }
+
+  Serial.printf("Going to sleep for %d seconds...\n", LORAWAN_UPLINK_PERIOD_S);
+  display.clear();
+  display.printf("Sleep %ds\nBat: %u%%", LORAWAN_UPLINK_PERIOD_S, batPct);
+  delay(500); // brief pause so the display is visible
+
+  // Deep sleep — wakes up and re-runs setup()
+  heltec_deep_sleep(LORAWAN_UPLINK_PERIOD_S);
 }
 
 void loop() {
-  heltec_loop();
-  
-  uint32_t currentMillis = millis();
-  if (currentMillis - previousMillis >= LORAWAN_UPLINK_PERIOD) {
-    previousMillis = currentMillis;
-
-    // Dummy payload, just sending some data like in node.ino
-    uint8_t uplinkPayload[4] = {0};
-    uint16_t tempDecimal = 5;
-    uint16_t humDecimal = 10;
-    uplinkPayload[0] = (tempDecimal >> 8);
-    uplinkPayload[1] = tempDecimal & 0xFF;
-    uplinkPayload[2] = (humDecimal >> 8);
-    uplinkPayload[3] = humDecimal & 0xFF;
-
-    display.clear();
-    display.println("Sending uplink...");
-    Serial.println("Sending uplink");
-
-    int16_t state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), LORAWAN_UPLINK_USER_PORT);
-    if (state == RADIOLIB_ERR_NONE || state == RADIOLIB_LORAWAN_DOWNLINK) {
-      display.println("TX Success!");
-      Serial.println("Sending uplink successful!");
-      saveSession(); // Save session (frame counters) after successful send
-    } else if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
-      display.println("Lost Network!");
-      Serial.println("Network not joined (-1101)! Rejoining...");
-      joinNetwork();
-    } else {
-      display.printf("TX fail: %i\n", state);
-      Serial.printf("Error in sendReceive: %i\n", state);
-    }
-  }
-
-  // Button
-  if (button.isSingleClick()) {
-    display.println("Button works");
-    // LED
-    for (int n = 0; n <= 100; n++) { heltec_led(n); delay(5); }
-    for (int n = 100; n >= 0; n--) { heltec_led(n); delay(5); }
-    display.println("LED works");
-  }
+  // Not used — device deep sleeps after each uplink.
+  // loop() is intentionally empty.
 }
