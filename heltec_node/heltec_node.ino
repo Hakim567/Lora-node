@@ -57,7 +57,8 @@ uint8_t readBatteryPercent() {
 
   // V_adc = (raw / 4095) * 3.3V
   // V_bat = V_adc * ((390k + 100k) / 100k) = V_adc * 4.9
-  float voltage = (raw / 4095.0f) * 3.3f * 4.9f;
+  float voltage = (raw / 4095.0f) * 3.3f * 5.25f;
+  Serial.printf("Measured voltage: %.3f V\n", voltage);  // add this
 
   // Map voltage to 0–100%
   float pct = (voltage - VBAT_MIN) / (VBAT_MAX - VBAT_MIN) * 100.0f;
