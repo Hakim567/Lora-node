@@ -240,7 +240,7 @@ function updateMap() {
     );
     const ageSecs = (Date.now() - new Date(newest.timestamp + 'Z').getTime()) / 1000;
     // Gateway marker: green if any fresh traffic, grey otherwise
-    const gwColor = ageSecs < 60 ? '#22c55e' : '#64748b';
+    const gwColor = ageSecs < 150 ? '#22c55e' : '#64748b';
 
     const icon = L.divIcon({
       html: `<div class="gw-marker" style="background:${gwColor}; color:${gwColor};"></div>`,
@@ -256,7 +256,7 @@ function updateMap() {
       if (!r.predicted_distance) return null;
       // Each circle uses the node's unique colour when fresh, grey when stale
       const rAgeSecs = (Date.now() - new Date(r.timestamp + 'Z').getTime()) / 1000;
-      const nodeColor = rAgeSecs < 60 ? getNodeColor(r.node_id) : '#64748b';
+      const nodeColor = rAgeSecs < 150 ? getNodeColor(r.node_id) : '#64748b';
       const circle = L.circle([gw.latitude, gw.longitude], {
         radius: r.predicted_distance,
         color: nodeColor,
@@ -496,16 +496,16 @@ function renderNodeList(readings) {
   el.innerHTML = Object.values(byNode).map(r => {
     const rssiPct = Math.max(0, Math.min(100, ((r.rssi + 120) / 80) * 100));
     const ageSecs = (Date.now() - new Date(r.timestamp + 'Z').getTime()) / 1000;
-    const ageClass = ageSecs < 60 ? '' : 'stale';
-    const dotColor = ageSecs < 60 ? getNodeColor(r.node_id) : '#64748b';
+    const ageClass = ageSecs < 150 ? '' : 'stale';
+    const dotColor = ageSecs < 150 ? getNodeColor(r.node_id) : '#64748b';
 
     // Battery indicator — only rendered when battery_level is present
     const batIndicator = r.battery_level != null ? (() => {
-      const pct   = Math.round(r.battery_level);
+      const pct = Math.round(r.battery_level);
       const color = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--orange)' : 'var(--red)';
       // SVG battery: body 20×11, nub 2.5×5, fill scales with pct (max fill-width = 16)
       const fillW = Math.max(0, (pct / 100) * 16).toFixed(1);
-      const icon  = `<svg class="bat-icon" viewBox="0 0 24 12" xmlns="http://www.w3.org/2000/svg">
+      const icon = `<svg class="bat-icon" viewBox="0 0 24 12" xmlns="http://www.w3.org/2000/svg">
         <rect x="0.5" y="0.5" width="20" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
         <rect x="21.5" y="3.5" width="2" height="5" rx="1" fill="currentColor"/>
         <rect x="2" y="2" width="${fillW}" height="8" rx="1" fill="currentColor"/>
