@@ -1,6 +1,7 @@
 #include "config.h"
 #include "EEPROM.h"
 #include <Wire.h>
+#include <esp_sleep.h>
 
 // regional choices: EU868, US915, AU915, AS923, IN865, KR920, CN780, CN500
 const LoRaWANBand_t Region = AS923;
@@ -23,21 +24,39 @@ uint8_t deviceInfo[LORAWAN_DEV_INFO_SIZE] = {0};
 uint8_t serialDataBuf[SERIAL_DATA_BUF_LEN] = {0};
 uint8_t serialIndex = 0;
 
-#define UPLINK_PAYLOAD_MAX_LEN  256
-uint8_t uplinkPayload[UPLINK_PAYLOAD_MAX_LEN] = {0};
-uint16_t uplinkPayloadLen = 0;
-
-uint32_t previousMillis = 0;
-
 #define RADIOLIB_SESSION_EEPROM_ADDR 64
+
+// ── Battery ADC ──────────────────────────────────────────────────
+// Onboard voltage divider on D0 (ratio 1/2).
+// analogReadMilliVolts() returns corrected mV at the pin.
+// Calibration: code read 3.840 V vs multimeter 4.010 V
+//   correction = 4.010 / 3.840 = 1.0443
+#define VBAT_ADC_PIN  D0
+#define VBAT_CAL      1.0443f
+#define VBAT_MIN      3.0f     // battery empty (V)
+#define VBAT_MAX      4.2f     // battery full  (V)
+
+uint8_t readBatteryPercent() {
+  int32_t Vbatt = 0;
+  for (int i = 0; i < 16; i++) {
+    Vbatt += analogReadMilliVolts(VBAT_ADC_PIN);
+  }
+  float Vbattf = 2.0f * Vbatt / 16.0f / 1000.0f * VBAT_CAL;
+  Serial.printf("Battery voltage: %.3f V\n", Vbattf);
+
+  float pct = (Vbattf - VBAT_MIN) / (VBAT_MAX - VBAT_MIN) * 100.0f;
+  if (pct < 0.0f)   pct = 0.0f;
+  if (pct > 100.0f) pct = 100.0f;
+  return (uint8_t)pct;
+}
 
 void saveSession() {
   uint8_t *noncesBuffer = node.getBufferNonces();
   uint8_t *sessionBuffer = node.getBufferSession();
-  
-  EEPROM.write(RADIOLIB_SESSION_EEPROM_ADDR, 0xAA); // Magic byte indicating valid saved data
+
+  EEPROM.write(RADIOLIB_SESSION_EEPROM_ADDR, 0xAA);
   int addr = RADIOLIB_SESSION_EEPROM_ADDR + 1;
-  
+
   for (size_t i = 0; i < RADIOLIB_LORAWAN_NONCES_BUF_SIZE; i++) {
     EEPROM.write(addr++, noncesBuffer[i]);
   }
@@ -50,12 +69,12 @@ void saveSession() {
 
 void joinNetwork() {
   node.beginOTAA(joinEUI, devEUI, nwkKey, appKey);
-  
+
   if (EEPROM.read(RADIOLIB_SESSION_EEPROM_ADDR) == 0xAA) {
     uint8_t noncesBuffer[RADIOLIB_LORAWAN_NONCES_BUF_SIZE];
     uint8_t sessionBuffer[RADIOLIB_LORAWAN_SESSION_BUF_SIZE];
     int addr = RADIOLIB_SESSION_EEPROM_ADDR + 1;
-    
+
     for (size_t i = 0; i < RADIOLIB_LORAWAN_NONCES_BUF_SIZE; i++) {
       noncesBuffer[i] = EEPROM.read(addr++);
     }
@@ -66,7 +85,7 @@ void joinNetwork() {
     node.setBufferSession(sessionBuffer);
     Serial.println("Restoring session from EEPROM...");
   } else {
-    Serial.println("No saved session. Join ('login') the LoRaWAN Network...");
+    Serial.println("No saved session. Joining LoRaWAN Network...");
   }
 
   while (1) {
@@ -79,10 +98,10 @@ void joinNetwork() {
       Serial.println("Session successfully restored!");
       break;
     }
-    debug(true, F("Join failed"), state, false); // Don't freeze on fail during auto-rejoin
+    debug(true, F("Join failed"), state, false);
     delay(15000);
   }
-  
+
   node.setADR(false);
   node.setDatarate(LORAWAN_UPLINK_DATA_RATE);
   node.setDutyCycle(false);
@@ -97,6 +116,7 @@ void setup() {
     while (1);
   }
 
+  // 5-second provisioning window (serial key input)
   uint32_t now = millis();
   while (1) {
     deviceInfoSet();
@@ -104,8 +124,8 @@ void setup() {
   }
 
   deviceInfoLoad();
-  Serial.println(F("\nSetup... "));
-  Serial.println(F("Initialise the radio"));
+  Serial.println(F("\nBooting..."));
+
   int16_t state = radio.begin();
   radio.setOutputPower(22);
   debug(state != RADIOLIB_ERR_NONE, F("Initialise radio failed"), state, true);
@@ -116,66 +136,51 @@ void setup() {
   // Execute the persistent join logic
   joinNetwork();
 
-  Serial.println(F("Ready!\n"));
+  // ── Read battery level ────────────────────────────────────────
+  uint8_t batPct = readBatteryPercent();
+  Serial.printf("Battery: %u%%\n", batPct);
 
-  Wire.begin();
+  // ── Build payload ─────────────────────────────────────────────
+  // Bytes 0-1: temperature (×100, uint16 big-endian)
+  // Bytes 2-3: humidity    (×100, uint16 big-endian)
+  // Byte  4:   battery %   (0-100)
+  uint8_t uplinkPayload[5] = {0};
+  uint16_t uplinkPayloadLen = 0;
 
-  // Trigger first uplink immediately
-  previousMillis = millis() - LORAWAN_UPLINK_PERIOD;
-}
-
-void loop() {
-  uint32_t currentMillis = millis();
-  if (currentMillis - previousMillis < LORAWAN_UPLINK_PERIOD) {
-    // Not time yet — handle serial input and yield
-    deviceInfoSet();
-    delay(100);
-    return;
-  }
-  previousMillis = currentMillis;
-
-  // --- Build payload ---
   float temp_hum_val[2] = {0};
-  uplinkPayloadLen = 0;
-  memset(uplinkPayload, 0, sizeof(uplinkPayload));  // FIX: was memset(buf, size, 0) — args were swapped
-
-  // TODO: replace hardcoded values with real sensor read
+  // TODO: replace with real sensor read
   // e.g. dht.readTempAndHumidity(temp_hum_val)
-  // temp_hum_val[1] = temperature, temp_hum_val[0] = humidity
-  uint16_t tempDecimal = (uint16_t)(temp_hum_val[1] * 100);  // e.g. 25.50°C -> 2550
-  uint16_t humDecimal  = (uint16_t)(temp_hum_val[0] * 100);  // e.g. 65.00% -> 6500
+  uint16_t tempDecimal = (uint16_t)(temp_hum_val[1] * 100);
+  uint16_t humDecimal  = (uint16_t)(temp_hum_val[0] * 100);
 
   uplinkPayload[uplinkPayloadLen++] = (tempDecimal >> 8);
   uplinkPayload[uplinkPayloadLen++] = (tempDecimal & 0xFF);
   uplinkPayload[uplinkPayloadLen++] = (humDecimal >> 8);
   uplinkPayload[uplinkPayloadLen++] = (humDecimal & 0xFF);
+  uplinkPayload[uplinkPayloadLen++] = batPct;
 
-  Serial.print("Temperature: ");
-  Serial.print(temp_hum_val[1]);
-  Serial.print(" *C, Humidity: ");
-  Serial.println(temp_hum_val[0]);
-  Serial.print("Uplink payload length: ");
-  Serial.println(uplinkPayloadLen);
-  Serial.print("Uplink payload: ");
-  for (int i = 0; i < uplinkPayloadLen; i++) {
-    Serial.print(uplinkPayload[i], HEX);
-    Serial.print(" ");
-  }
-  Serial.println();
+  Serial.println("Sending uplink...");
 
-  // --- Send uplink (only once per cycle) ---
-  int16_t state = node.sendReceive(uplinkPayload, uplinkPayloadLen, LORAWAN_UPLINK_USER_PORT);
+  state = node.sendReceive(uplinkPayload, uplinkPayloadLen, LORAWAN_UPLINK_USER_PORT);
   if (state == RADIOLIB_LORAWAN_DOWNLINK || state == RADIOLIB_ERR_NONE) {
     Serial.println("Uplink successful!");
-    saveSession(); // Save session (frame counters) after successful send
+    saveSession();
   } else if (state == RADIOLIB_ERR_NETWORK_NOT_JOINED) {
-    Serial.println("Network not joined (-1101)! Rejoining...");
-    joinNetwork();
+    Serial.println("Network not joined (-1101)! Will rejoin on next wake.");
   } else {
-    Serial.print("Error in sendReceive: ");
-    Serial.println(state);
+    Serial.print("Uplink failed: ");
     Serial.println(stateDecode(state));
   }
+
+  Serial.printf("Sleeping for %d seconds...\n", LORAWAN_UPLINK_PERIOD / 1000);
+
+  // Deep sleep — wakes up and re-runs setup()
+  esp_sleep_enable_timer_wakeup((uint64_t)(LORAWAN_UPLINK_PERIOD) * 1000ULL); // ms → us
+  esp_deep_sleep_start();
+}
+
+void loop() {
+  // Not used — device deep sleeps after each uplink.
 }
 
 void deviceInfoLoad() {
@@ -206,7 +211,7 @@ void deviceInfoSet() {
     if (serialIndex > 2 && serialDataBuf[serialIndex - 2] == '\r' && serialDataBuf[serialIndex - 1] == '\n') {
       Serial.println("Get serial data:");
       arrayDump(serialDataBuf, serialIndex);
-      if (serialIndex == 34) {  // 8 + 8 + 16 + 2
+      if (serialIndex == 34) {
         uint16_t checkSum = 0;
         for (int i = 0; i < 32; i++) checkSum += serialDataBuf[i];
         memcpy(deviceInfo, serialDataBuf, 32);
@@ -218,7 +223,7 @@ void deviceInfoSet() {
         Serial.println("Error serial data length");
       }
       serialIndex = 0;
-      memset(serialDataBuf, 0, sizeof(serialDataBuf));  // FIX: args were swapped
+      memset(serialDataBuf, 0, sizeof(serialDataBuf));
     }
   }
 }
