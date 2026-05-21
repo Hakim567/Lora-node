@@ -203,6 +203,10 @@ async function refresh() {
     renderNodeList(rdData);
     updateHeaderStats(gwData, rdData);
 
+    if (document.getElementById('tab-battery').classList.contains('active')) {
+      updateBatteryChart();
+    }
+
     lastPollTime = Date.now();
     pulseLiveDot();
   } catch (e) {
@@ -709,6 +713,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`tab-${name}`).classList.add('active');
   document.getElementById(`content-${name}`).classList.add('active');
+  
+  if (name === 'battery') {
+    updateBatteryChart();
+  }
 }
 
 /* ── Toast ──────────────────────────────────────────────────── */
@@ -732,6 +740,284 @@ function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/* ── Battery Tab ────────────────────────────────────────────── */
+let batteryChart = null;
+let batteryTimeframe = 1; // default 1 hour
+let lastBatteryDataSignature = '';
+
+async function fetchBatteryHistory(hours) {
+  const ts = Date.now();
+  const res = await fetch(`${API_BASE_URL}/api/readings/battery-history?hours=${hours}&t=${ts}`);
+  return await res.json();
+}
+
+function onTimeframeChange() {
+  batteryTimeframe = parseFloat(document.getElementById('battery-timeframe').value) || 1;
+  updateBatteryChart();
+}
+
+async function updateBatteryChart() {
+  try {
+    const history = await fetchBatteryHistory(batteryTimeframe);
+    
+    // Check signature to avoid updating chart if the underlying data has not changed
+    const sig = history.length + '_' + (history.length > 0 ? history[history.length - 1].timestamp : '') + '_' + batteryTimeframe;
+    if (sig === lastBatteryDataSignature && batteryChart) {
+      return; // Skip rendering
+    }
+    lastBatteryDataSignature = sig;
+
+    renderBatteryChart(history);
+    renderBatteryStats(history);
+  } catch (e) {
+    console.error('Failed to update battery chart:', e);
+  }
+}
+
+function renderBatteryChart(data) {
+  const ctx = document.getElementById('batteryChart');
+  if (!ctx) return;
+
+  // Group by node_id
+  const groups = {};
+  data.forEach(r => {
+    if (!groups[r.node_id]) {
+      groups[r.node_id] = {
+        name: r.node_name,
+        points: []
+      };
+    }
+    groups[r.node_id].points.push({
+      x: new Date(r.timestamp + 'Z').getTime(),
+      y: r.battery_level
+    });
+  });
+
+  const datasets = Object.entries(groups).map(([nodeId, group]) => {
+    const color = getNodeColor(nodeId);
+    return {
+      label: group.name,
+      data: group.points,
+      borderColor: color,
+      backgroundColor: color + '12', // subtle gradient area fill
+      borderWidth: 2,
+      tension: 0.3,
+      fill: true,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      spanGaps: true
+    };
+  });
+
+  const isLight = document.documentElement.classList.contains('light-mode');
+  const textColor = isLight ? '#5f6368' : '#9aa0a6';
+  const gridColor = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)';
+  const tooltipBg = isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(14, 15, 16, 0.95)';
+  const tooltipBorder = isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)';
+  const tooltipText = isLight ? '#000' : '#fff';
+
+  const nowMs = Date.now();
+  // Round to nearest 10 seconds to align timeline updates and prevent constant micro-shifts
+  const roundedNowMs = Math.floor(nowMs / 10000) * 10000;
+  const minMs = roundedNowMs - batteryTimeframe * 60 * 60 * 1000;
+
+  if (!batteryChart) {
+    batteryChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            type: 'linear',
+            position: 'bottom',
+            min: minMs,
+            max: roundedNowMs,
+            ticks: {
+              color: textColor,
+              font: { family: 'Inter', size: 10 },
+              callback: function(value) {
+                const date = new Date(value);
+                if (batteryTimeframe <= 24) {
+                  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } else if (batteryTimeframe <= 168) {
+                  return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } else {
+                  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                }
+              }
+            },
+            grid: { color: gridColor }
+          },
+          y: {
+            min: 0,
+            max: 100,
+            ticks: {
+              color: textColor,
+              font: { family: 'Inter', size: 10 },
+              callback: function(value) { return value + '%'; }
+            },
+            grid: { color: gridColor }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: {
+              color: textColor,
+              font: { family: 'Inter', size: 11, weight: '500' }
+            }
+          },
+          tooltip: {
+            backgroundColor: tooltipBg,
+            titleColor: tooltipText,
+            bodyColor: tooltipText,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            titleFont: { family: 'Inter', size: 11, weight: 'bold' },
+            bodyFont: { family: 'Inter', size: 11 },
+            callbacks: {
+              title: function(context) {
+                const date = new Date(context[0].raw.x);
+                if (batteryTimeframe <= 24) {
+                  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                } else {
+                  return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                }
+              },
+              label: function(context) {
+                return ` ${context.dataset.label}: ${context.raw.y.toFixed(1)}%`;
+              }
+            }
+          }
+        }
+      }
+    });
+  } else {
+    // Update datasets in-place to avoid re-creation layout animations
+    const existing = batteryChart.data.datasets;
+    const existingMap = {};
+    existing.forEach(d => { existingMap[d.label] = d; });
+
+    const newDatasets = [];
+    datasets.forEach(newD => {
+      const ext = existingMap[newD.label];
+      if (ext) {
+        ext.data = newD.data;
+        ext.borderColor = newD.borderColor;
+        ext.backgroundColor = newD.backgroundColor;
+        newDatasets.push(ext);
+      } else {
+        newDatasets.push(newD);
+      }
+    });
+
+    batteryChart.data.datasets = newDatasets;
+    batteryChart.options.scales.x.min = minMs;
+    batteryChart.options.scales.x.max = roundedNowMs;
+    batteryChart.options.scales.x.ticks.color = textColor;
+    batteryChart.options.scales.x.grid.color = gridColor;
+    batteryChart.options.scales.y.ticks.color = textColor;
+    batteryChart.options.scales.y.grid.color = gridColor;
+    batteryChart.options.plugins.legend.labels.color = textColor;
+    batteryChart.options.plugins.tooltip.backgroundColor = tooltipBg;
+    batteryChart.options.plugins.tooltip.borderColor = tooltipBorder;
+    batteryChart.options.plugins.tooltip.titleColor = tooltipText;
+    batteryChart.options.plugins.tooltip.bodyColor = tooltipText;
+    
+    // Use 'none' transition mode to prevent jumping animation
+    batteryChart.update('none');
+  }
+}
+
+function renderBatteryStats(data) {
+  const el = document.getElementById('battery-stats');
+  if (!el) return;
+
+  const groups = {};
+  data.forEach(r => {
+    if (!groups[r.node_id]) {
+      groups[r.node_id] = {
+        name: r.node_name,
+        points: []
+      };
+    }
+    groups[r.node_id].points.push({
+      time: new Date(r.timestamp + 'Z').getTime(),
+      val: r.battery_level
+    });
+  });
+
+  const nodeIds = Object.keys(groups);
+  if (nodeIds.length === 0) {
+    el.innerHTML = `<div class="empty-state" style="padding: 10px 0;"><div class="empty-icon">🔋</div>No battery history in this timeframe.</div>`;
+    return;
+  }
+
+  el.innerHTML = nodeIds.map(nodeId => {
+    const color = getNodeColor(nodeId);
+    const group = groups[nodeId];
+    group.points.sort((a, b) => a.time - b.time);
+
+    const latestVal = group.points[group.points.length - 1].val;
+
+    let drainRateText = 'Calculating…';
+    let remainingText = 'Calculating…';
+
+    if (group.points.length >= 2) {
+      const first = group.points[0];
+      const last = group.points[group.points.length - 1];
+      const dtHours = (last.time - first.time) / (1000 * 60 * 60);
+
+      if (dtHours > 0.05) {
+        const dVal = first.val - last.val;
+        const rate = dVal / dtHours;
+
+        if (rate > 0.01) {
+          drainRateText = `${rate.toFixed(2)}% / hr`;
+          const hoursLeft = latestVal / rate;
+          if (hoursLeft > 24) {
+            remainingText = `~${(hoursLeft / 24).toFixed(1)} days`;
+          } else {
+            remainingText = `~${hoursLeft.toFixed(1)} hrs`;
+          }
+        } else if (rate < -0.01) {
+          drainRateText = `+${Math.abs(rate).toFixed(2)}% / hr (Charging)`;
+          remainingText = 'Stable';
+        } else {
+          drainRateText = '0.00% / hr (Stable)';
+          remainingText = 'Stable';
+        }
+      } else {
+        drainRateText = 'Gathering points…';
+        remainingText = 'Gathering points…';
+      }
+    }
+
+    return `
+      <div class="battery-stat-card" style="--accent-color: ${color}">
+        <div class="bat-stat-header">
+          <span class="bat-stat-name">
+            <span class="node-color-dot" style="background:${color};box-shadow:0 0 6px ${color}; margin-right:0;"></span>
+            ${escHtml(group.name)}
+          </span>
+          <span class="bat-stat-current" style="color: ${color}">${Math.round(latestVal)}%</span>
+        </div>
+        <div class="bat-stat-body">
+          <div class="bat-stat-item">
+            <span class="bat-stat-label">Drain Rate</span>
+            <span class="bat-stat-value">${drainRateText}</span>
+          </div>
+          <div class="bat-stat-item">
+            <span class="bat-stat-label">Remaining Est.</span>
+            <span class="bat-stat-value">${remainingText}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 /* ── Theme toggle ───────────────────────────────────────────── */
 function getTileUrl() {
   return document.documentElement.classList.contains('light-mode')
@@ -746,6 +1032,26 @@ function toggleTheme() {
   // Swap map tiles
   if (tileLayer) {
     tileLayer.setUrl(isLight ? TILES.light : TILES.dark);
+  }
+
+  // Update chart theme if initialized
+  if (batteryChart) {
+    const textColor = isLight ? '#5f6368' : '#9aa0a6';
+    const gridColor = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)';
+    const tooltipBg = isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(14, 15, 16, 0.95)';
+    const tooltipBorder = isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)';
+    const tooltipText = isLight ? '#000' : '#fff';
+
+    batteryChart.options.scales.x.ticks.color = textColor;
+    batteryChart.options.scales.x.grid.color = gridColor;
+    batteryChart.options.scales.y.ticks.color = textColor;
+    batteryChart.options.scales.y.grid.color = gridColor;
+    batteryChart.options.plugins.legend.labels.color = textColor;
+    batteryChart.options.plugins.tooltip.backgroundColor = tooltipBg;
+    batteryChart.options.plugins.tooltip.borderColor = tooltipBorder;
+    batteryChart.options.plugins.tooltip.titleColor = tooltipText;
+    batteryChart.options.plugins.tooltip.bodyColor = tooltipText;
+    batteryChart.update('none');
   }
 }
 

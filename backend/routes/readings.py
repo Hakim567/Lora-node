@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, text
 
@@ -50,3 +51,27 @@ def latest_readings(session: Session = Depends(get_session)):
     """)
     rows = session.execute(query).all()
     return [dict(row._mapping) for row in rows]
+
+
+@router.get("/readings/battery-history")
+def battery_history(hours: float = 1.0, session: Session = Depends(get_session)):
+    """
+    Returns aggregated battery readings for all nodes over the past N hours.
+    """
+    since = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    query = text("""
+        SELECT 
+            r.node_id,
+            n.name AS node_name,
+            AVG(r.battery_level) AS battery_level,
+            strftime('%Y-%m-%d %H:%M:%S', r.timestamp) AS timestamp
+        FROM reading r
+        JOIN node n ON n.id = r.node_id
+        WHERE r.battery_level IS NOT NULL
+          AND r.timestamp >= :since
+        GROUP BY r.node_id, timestamp
+        ORDER BY timestamp ASC
+    """)
+    rows = session.execute(query, {"since": since}).all()
+    return [dict(row._mapping) for row in rows]
+
