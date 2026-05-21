@@ -20,9 +20,7 @@ uint8_t nwkKey[] = { RADIOLIB_LORAWAN_NWK_KEY };
 #define LORAWAN_DEV_INFO_SIZE 36
 uint8_t deviceInfo[LORAWAN_DEV_INFO_SIZE] = {0};
 
-#define SERIAL_DATA_BUF_LEN  64
-uint8_t serialDataBuf[SERIAL_DATA_BUF_LEN] = {0};
-uint8_t serialIndex = 0;
+
 
 #define RADIOLIB_SESSION_EEPROM_ADDR 64
 
@@ -38,10 +36,10 @@ uint8_t serialIndex = 0;
 
 uint8_t readBatteryPercent() {
   int32_t Vbatt = 0;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < 8; i++) {
     Vbatt += analogReadMilliVolts(VBAT_ADC_PIN);
   }
-  float Vbattf = 2.0f * Vbatt / 16.0f / 1000.0f * VBAT_CAL;
+  float Vbattf = 2.0f * Vbatt / 8.0f / 1000.0f * VBAT_CAL;
   Serial.printf("Battery voltage: %.3f V\n", Vbattf);
 
   float pct = (Vbattf - VBAT_MIN) / (VBAT_MAX - VBAT_MIN) * 100.0f;
@@ -116,18 +114,12 @@ void setup() {
     while (1);
   }
 
-  // 5-second provisioning window (serial key input)
-  uint32_t now = millis();
-  while (1) {
-    deviceInfoSet();
-    if (millis() - now >= 5000) break;
-  }
+
 
   deviceInfoLoad();
   Serial.println(F("\nBooting..."));
 
   int16_t state = radio.begin();
-  radio.setOutputPower(22);
   debug(state != RADIOLIB_ERR_NONE, F("Initialise radio failed"), state, true);
 
   // SX1262 rf switch order: setRfSwitchPins(rxEn, txEn);
@@ -176,6 +168,11 @@ void setup() {
 
   // Deep sleep — wakes up and re-runs setup()
   esp_sleep_enable_timer_wakeup((uint64_t)(LORAWAN_UPLINK_PERIOD) * 1000ULL); // ms → us
+
+  // Put SX1262 to sleep and set RF switch control pin to INPUT to minimize power leakage
+  radio.sleep();
+  pinMode(38, INPUT);
+
   esp_deep_sleep_start();
 }
 
@@ -204,26 +201,4 @@ void deviceInfoLoad() {
   }
 }
 
-void deviceInfoSet() {
-  if (Serial.available()) {
-    serialDataBuf[serialIndex++] = Serial.read();
-    if (serialIndex >= SERIAL_DATA_BUF_LEN) serialIndex = 0;
-    if (serialIndex > 2 && serialDataBuf[serialIndex - 2] == '\r' && serialDataBuf[serialIndex - 1] == '\n') {
-      Serial.println("Get serial data:");
-      arrayDump(serialDataBuf, serialIndex);
-      if (serialIndex == 34) {
-        uint16_t checkSum = 0;
-        for (int i = 0; i < 32; i++) checkSum += serialDataBuf[i];
-        memcpy(deviceInfo, serialDataBuf, 32);
-        memcpy(deviceInfo + 32, (uint8_t *)(&checkSum), 2);
-        for (int i = 0; i < 34; i++) EEPROM.write(i, deviceInfo[i]);
-        EEPROM.commit();
-        Serial.println("Save serial data, please reboot...");
-      } else {
-        Serial.println("Error serial data length");
-      }
-      serialIndex = 0;
-      memset(serialDataBuf, 0, sizeof(serialDataBuf));
-    }
-  }
-}
+
