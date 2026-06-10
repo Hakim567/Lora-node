@@ -14,3 +14,8 @@ API_PORT = int(os.getenv("API_PORT", "8000"))
 # Log-distance path loss model defaults
 RSSI_REF = float(os.getenv("RSSI_REF", "-40"))      # dBm at 1 m reference distance
 PATH_LOSS_EXP = float(os.getenv("PATH_LOSS_EXP", "2.7"))  # path loss exponent
+
+# Auth
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "admin")
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me-to-a-long-random-string-in-production")

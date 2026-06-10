@@ -92,13 +92,105 @@ function getNodeColor(nodeId) {
   return nodeColorMap[nodeId];
 }
 
-/* ── Init ───────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+/* ── Auth ───────────────────────────────────────────────────── */
+async function checkAuth() {
+  try {
+    const res = await originalFetch(`${API_BASE_URL}/api/auth/me`);
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('hdr-username').textContent = data.username;
+      hideLoginOverlay();
+      return true;
+    }
+  } catch (e) { /* network error — treat as unauth */ }
+  showLoginOverlay();
+  return false;
+}
+
+function showLoginOverlay() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideLoginOverlay() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('login-submit-btn');
+  const errEl = document.getElementById('login-error');
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+
+  errEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  try {
+    const res = await originalFetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+      credentials: 'same-origin',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('hdr-username').textContent = data.username;
+      hideLoginOverlay();
+      // Kick off the app now that we're logged in
+      initApp();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      errEl.textContent = err.detail || 'Invalid credentials';
+    }
+  } catch (e) {
+    errEl.textContent = 'Network error — please try again';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+async function logout() {
+  await originalFetch(`${API_BASE_URL}/api/auth/logout`, {
+    method: 'POST',
+    credentials: 'same-origin',
+  });
+  document.getElementById('hdr-username').textContent = '';
+  showLoginOverlay();
+  // Reset card animation so it replays
+  const card = document.querySelector('.login-card');
+  if (card) {
+    card.style.animation = 'none';
+    void card.offsetWidth;
+    card.style.animation = '';
+  }
+}
+
+let appInitialized = false;
+
+function initApp() {
+  if (appInitialized) {
+    // Already running — just kick a fresh poll (map + timers are still alive)
+    refresh();
+    return;
+  }
+  appInitialized = true;
   initMap();
   fetchModelParams();
   refresh();
   setInterval(refresh, POLL_INTERVAL);
   setInterval(updateLiveText, 1000);
+}
+
+/* ── Init ───────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', async () => {
+  const authed = await checkAuth();
+  if (authed) {
+    initApp();
+  }
 });
 
 /* ── Map ────────────────────────────────────────────────────── */
