@@ -85,7 +85,8 @@ async def chirpstack_uplink(
     for rx in rx_info_list:
         gateway_id = rx.get("gatewayId", "")
         rssi = rx.get("rssi", -100)
-        snr = rx.get("snr", None)
+        snr = rx.get("snr")
+        if snr is None: snr = 0.0
 
         if not gateway_id:
             continue
@@ -96,7 +97,13 @@ async def chirpstack_uplink(
             gw = Gateway(id=gateway_id, name=gateway_id)
             session.add(gw)
 
-        distance = predict_range(rssi)
+        distance = predict_range(
+            algorithm=node.algorithm, 
+            rssi=rssi, 
+            snr=snr, 
+            path_loss_ref=node.path_loss_ref, 
+            path_loss_exp=node.path_loss_exp
+        )
 
         reading = Reading(
             node_id=node_id,

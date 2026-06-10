@@ -14,6 +14,9 @@ class Gateway(SQLModel, table=True):
 class Node(SQLModel, table=True):
     id: str = Field(primary_key=True)          # devEUI
     name: str
+    algorithm: str = Field(default="path_loss")
+    path_loss_ref: float = Field(default=-40.0)
+    path_loss_exp: float = Field(default=2.7)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

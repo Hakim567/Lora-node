@@ -210,7 +210,7 @@ function initMap() {
     options: { position: 'bottomright' },
     onAdd() {
       const wrap = L.DomUtil.create('div', 'leaflet-bar');
-      const btn  = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
+      const btn = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
       btn.id = 'ctrl-locate';
       btn.title = 'Locate me';
       btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -231,7 +231,7 @@ function initMap() {
     options: { position: 'bottomright' },
     onAdd() {
       const wrap = L.DomUtil.create('div', 'leaflet-bar');
-      const btn  = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
+      const btn = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
       btn.id = 'ctrl-warn';
       btn.title = 'Alerts';
       btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -374,11 +374,11 @@ function locateMe() {
 
 /* ── Warning system ─────────────────────────────────────────── */
 const STALE_THRESH_SECS = 150;
-const BATTERY_WARN_PCT  = 20;
-let   activeWarnings    = [];   // [{ nodeId, nodeName, type, detail }]
-let   warnPulseTimer    = null;
-let   warningPanelOpen  = false;
-let   audioCtx          = null;
+const BATTERY_WARN_PCT = 20;
+let activeWarnings = [];   // [{ nodeId, nodeName, type, detail }]
+let warnPulseTimer = null;
+let warningPanelOpen = false;
+let audioCtx = null;
 
 function getAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -387,9 +387,9 @@ function getAudioCtx() {
 
 function playWarnTone() {
   try {
-    const ctx  = getAudioCtx();
-    const now  = ctx.currentTime;
-    const osc  = ctx.createOscillator();
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -1001,7 +1001,113 @@ async function fetchModelParams() {
     document.getElementById('rssi-ref-slider').value = p.rssi_ref;
     document.getElementById('n-slider').value = p.path_loss_exp;
     onSliderChange();
+
+    // Load algorithms and nodes for the new per-node config
+    await fetchAlgorithms();
+    await fetchNodesForModelTab();
   } catch (e) { /* backend not up yet */ }
+}
+
+let availableAlgorithms = [];
+let modelTabNodes = [];
+
+async function fetchAlgorithms() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/config/algorithms`);
+    const data = await res.json();
+    availableAlgorithms = data.algorithms || ['path_loss'];
+
+    const select = document.getElementById('model-algo-select');
+    select.innerHTML = availableAlgorithms.map(a => {
+      let displayName = a;
+      if (displayName === 'path_loss') displayName = 'Path Loss';
+      else if (displayName.endsWith('.joblib')) displayName = displayName.replace('.joblib', '');
+      return `<option value="${a}">${displayName}</option>`;
+    }).join('');
+
+    updatePathLossCardVisibility();
+  } catch (e) {
+    console.error('Failed to fetch algorithms', e);
+  }
+}
+
+async function fetchNodesForModelTab() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/nodes`);
+    modelTabNodes = await res.json();
+
+    const select = document.getElementById('model-node-select');
+    const currentVal = select.value;
+
+    select.innerHTML = '<option value="">-- Select a Node --</option>' +
+      modelTabNodes.map(n => `<option value="${n.id}">${n.name || n.id}</option>`).join('');
+
+    if (currentVal && modelTabNodes.find(n => n.id === currentVal)) {
+      select.value = currentVal;
+    }
+  } catch (e) {
+    console.error('Failed to fetch nodes', e);
+  }
+}
+
+function onNodeModelChange() {
+  const selectNode = document.getElementById('model-node-select');
+  const selectAlgo = document.getElementById('model-algo-select');
+  const nodeId = selectNode.value;
+
+  if (!nodeId) {
+    selectAlgo.disabled = true;
+    selectAlgo.value = 'path_loss';
+    return;
+  }
+
+  const node = modelTabNodes.find(n => n.id === nodeId);
+  if (node) {
+    selectAlgo.disabled = false;
+    selectAlgo.value = node.algorithm || 'path_loss';
+
+    // Set specific node path loss parameters to sliders
+    document.getElementById('rssi-ref-slider').value = node.path_loss_ref ?? -40;
+    document.getElementById('n-slider').value = node.path_loss_exp ?? 2.7;
+    onSliderChange();
+  }
+
+  updatePathLossCardVisibility();
+}
+
+function updatePathLossCardVisibility() {
+  const algo = document.getElementById('model-algo-select').value;
+  const card = document.getElementById('path-loss-card');
+  if (card) {
+    card.style.display = (algo === 'path_loss') ? 'block' : 'none';
+  }
+  updateDistancePreview();
+}
+
+async function onAlgorithmChange() {
+  const nodeId = document.getElementById('model-node-select').value;
+  const algorithm = document.getElementById('model-algo-select').value;
+  if (!nodeId) return;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/nodes/${nodeId}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ algorithm })
+    });
+    if (res.ok) {
+      toast('Node algorithm updated ✓', 'success');
+      // Update local state
+      const node = modelTabNodes.find(n => n.id === nodeId);
+      if (node) node.algorithm = algorithm;
+
+      updatePathLossCardVisibility();
+    } else {
+      toast('Failed to update algorithm', 'error');
+    }
+  } catch (e) {
+    toast('Network error', 'error');
+  }
 }
 
 function onSliderChange() {
@@ -1009,35 +1115,82 @@ function onSliderChange() {
   const n = parseFloat(document.getElementById('n-slider').value);
   document.getElementById('rssi-ref-val').textContent = `${ref} dBm`;
   document.getElementById('n-val').textContent = n.toFixed(1);
-  updateDistancePreview(ref, n);
+  updateDistancePreview();
 }
 
-function updateDistancePreview(ref, n) {
-  const testRssi = [-60, -75, -90, -105];
+async function updateDistancePreview() {
+  const algo = document.getElementById('model-algo-select').value;
+  const ref = parseFloat(document.getElementById('rssi-ref-slider').value) || -40.0;
+  const n = parseFloat(document.getElementById('n-slider').value) || 2.7;
   const el = document.getElementById('preview-values');
-  el.innerHTML = testRssi.map(rssi => {
-    const d = Math.round(Math.pow(10, (ref - rssi) / (10 * n)));
-    return `<div class="preview-item">
-      <div class="preview-rssi">${rssi} dBm</div>
-      <div class="preview-dist">${d} m</div>
-    </div>`;
-  }).join('');
+
+  const labelEl = document.querySelector('#model-preview-card .preview-label');
+  if (labelEl) labelEl.textContent = 'Predicted distance at given RSSI & SNR';
+
+  if (!algo || algo === 'path_loss') {
+    const testCases = [
+      { rssi: -60, snr: 8.0 },
+      { rssi: -75, snr: 5.0 },
+      { rssi: -90, snr: 0.0 },
+      { rssi: -105, snr: -10.0 }
+    ];
+    el.innerHTML = testCases.map(tc => {
+      const d = Math.round(Math.pow(10, (ref - tc.rssi) / (10 * n)));
+      return `<div class="preview-item">
+        <div class="preview-rssi" style="font-size:11px;">${tc.rssi} dBm <br/><span style="color:#888;">${tc.snr} SNR</span></div>
+        <div class="preview-dist">${d} m</div>
+      </div>`;
+    }).join('');
+  } else {
+    // For ML Models
+    el.innerHTML = `<div style="padding: 10px; font-size: 13px; color: #888;">Running ML Model...</div>`;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/config/preview?algorithm=${algo}&path_loss_ref=${ref}&path_loss_exp=${n}`);
+      const data = await res.json();
+      el.innerHTML = data.preview.map(item => {
+        return `<div class="preview-item">
+          <div class="preview-rssi" style="font-size:11px;">${item.rssi} dBm <br/><span style="color:#888;">${item.snr} SNR</span></div>
+          <div class="preview-dist">${Math.round(item.distance)} m</div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      el.innerHTML = `<div style="padding: 10px; font-size: 13px; color: #ff5555;">Failed to load preview</div>`;
+    }
+  }
 }
 
 async function applyModelParams() {
-  const rssi_ref = parseFloat(document.getElementById('rssi-ref-slider').value);
+  const nodeId = document.getElementById('model-node-select').value;
+  if (!nodeId) {
+    toast('Please select a node first', 'error');
+    return;
+  }
+
+  const path_loss_ref = parseFloat(document.getElementById('rssi-ref-slider').value);
   const path_loss_exp = parseFloat(document.getElementById('n-slider').value);
+
   try {
-    const res = await fetch(`${API_BASE_URL}/api/config/range-model`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rssi_ref, path_loss_exp }),
+    const res = await fetch(`${API_BASE_URL}/api/nodes/${nodeId}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path_loss_ref, path_loss_exp }),
     });
     if (res.ok) {
-      toast('Model parameters updated ✓', 'success');
+      toast('Node model parameters updated ✓', 'success');
+
+      // Update local state
+      const node = modelTabNodes.find(n => n.id === nodeId);
+      if (node) {
+        node.path_loss_ref = path_loss_ref;
+        node.path_loss_exp = path_loss_exp;
+      }
+
       refresh();
+    } else {
+      toast('Failed to update model', 'error');
     }
   } catch (e) {
-    toast('Failed to update model', 'error');
+    toast('Network error', 'error');
   }
 }
 
@@ -1047,7 +1200,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById(`tab-${name}`).classList.add('active');
   document.getElementById(`content-${name}`).classList.add('active');
-  
+
   if (name === 'battery') {
     updateBatteryChart();
   }
@@ -1093,7 +1246,7 @@ function onTimeframeChange() {
 async function updateBatteryChart() {
   try {
     const history = await fetchBatteryHistory(batteryTimeframe);
-    
+
     // Check signature to avoid updating chart if the underlying data has not changed
     const sig = history.length + '_' + (history.length > 0 ? history[history.length - 1].timestamp : '') + '_' + batteryTimeframe;
     if (sig === lastBatteryDataSignature && batteryChart) {
@@ -1171,7 +1324,7 @@ function renderBatteryChart(data) {
             ticks: {
               color: textColor,
               font: { family: 'Inter', size: 10 },
-              callback: function(value) {
+              callback: function (value) {
                 const date = new Date(value);
                 if (batteryTimeframe <= 24) {
                   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1190,7 +1343,7 @@ function renderBatteryChart(data) {
             ticks: {
               color: textColor,
               font: { family: 'Inter', size: 10 },
-              callback: function(value) { return value + '%'; }
+              callback: function (value) { return value + '%'; }
             },
             grid: { color: gridColor }
           }
@@ -1211,7 +1364,7 @@ function renderBatteryChart(data) {
             titleFont: { family: 'Inter', size: 11, weight: 'bold' },
             bodyFont: { family: 'Inter', size: 11 },
             callbacks: {
-              title: function(context) {
+              title: function (context) {
                 const date = new Date(context[0].raw.x);
                 if (batteryTimeframe <= 24) {
                   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1219,7 +1372,7 @@ function renderBatteryChart(data) {
                   return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                 }
               },
-              label: function(context) {
+              label: function (context) {
                 return ` ${context.dataset.label}: ${context.raw.y.toFixed(1)}%`;
               }
             }
@@ -1258,7 +1411,7 @@ function renderBatteryChart(data) {
     batteryChart.options.plugins.tooltip.borderColor = tooltipBorder;
     batteryChart.options.plugins.tooltip.titleColor = tooltipText;
     batteryChart.options.plugins.tooltip.bodyColor = tooltipText;
-    
+
     // Use 'none' transition mode to prevent jumping animation
     batteryChart.update('none');
   }

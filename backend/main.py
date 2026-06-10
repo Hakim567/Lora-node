@@ -39,9 +39,31 @@ async def require_auth(request: Request, call_next):
     return await call_next(request)
 
 
+from database import create_db_and_tables, get_session
+from sqlalchemy import text
+
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+    # Safe migration: add columns to Node if missing
+    try:
+        db = next(get_session())
+        db.execute(text("ALTER TABLE node ADD COLUMN algorithm VARCHAR DEFAULT 'path_loss'"))
+        db.commit()
+    except Exception:
+        pass
+    try:
+        db = next(get_session())
+        db.execute(text("ALTER TABLE node ADD COLUMN path_loss_ref FLOAT DEFAULT -40.0"))
+        db.commit()
+    except Exception:
+        pass
+    try:
+        db = next(get_session())
+        db.execute(text("ALTER TABLE node ADD COLUMN path_loss_exp FLOAT DEFAULT 2.7"))
+        db.commit()
+    except Exception:
+        pass
 
 
 app.include_router(auth_router, prefix="/api")

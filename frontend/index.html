@@ -164,11 +164,11 @@
                 </select>
               </div>
             </div>
-            
+
             <div class="chart-container-wrap" style="position: relative; flex: 1; min-height: 250px; margin-top: 12px;">
               <canvas id="batteryChart"></canvas>
             </div>
-            
+
             <div id="battery-stats" class="battery-stats-container" style="margin-top: 16px;"></div>
           </div>
         </div>
@@ -176,8 +176,29 @@
         <!-- ── Model Tab ──────────────────────────────────── -->
         <div class="tab-content" id="content-model">
           <div class="model-section">
-            <div class="model-card">
-              <div class="model-card-title">Path Loss Parameters</div>
+            <div class="model-card" style="margin-bottom: 16px;">
+              <div class="model-card-title">Node Configuration</div>
+
+              <div class="form-group" style="margin-bottom: 12px;">
+                <label for="model-node-select" class="slider-label" style="display:block; margin-bottom: 4px;">Select
+                  Node</label>
+                <select id="model-node-select" class="select-sm" style="width: 100%;" onchange="onNodeModelChange()">
+                  <option value="">-- Select a Node --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="model-algo-select" class="slider-label" style="display:block; margin-bottom: 4px;">Algorithm
+                  / Model</label>
+                <select id="model-algo-select" class="select-sm" style="width: 100%;" disabled
+                  onchange="onAlgorithmChange()">
+                  <option value="path_loss">Path Loss</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="model-card" id="path-loss-card">
+              <div class="model-card-title">Node Path Loss Parameters</div>
 
               <div class="slider-group">
                 <div class="slider-header">
@@ -197,17 +218,19 @@
                   oninput="onSliderChange()" />
               </div>
 
-              <div class="distance-preview">
-                <div class="preview-label">Predicted distance at given RSSI</div>
-                <div class="preview-values" id="preview-values"></div>
-              </div>
-
               <div class="model-formula">
                 d = 10 ^ ( (RSSI_ref − RSSI) / (10 × n) )
               </div>
 
               <button class="btn btn-primary" style="width:100%; margin-top:14px; justify-content:center;"
                 onclick="applyModelParams()">Apply to Backend</button>
+            </div>
+
+            <div class="model-card" id="model-preview-card">
+              <div class="distance-preview" style="margin-top: 0; padding-top: 0; border-top: none;">
+                <div class="preview-label">Predicted distance at given RSSI</div>
+                <div class="preview-values" id="preview-values"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -264,8 +287,8 @@
         <div class="login-field">
           <label for="login-username">Username</label>
           <div class="login-input-wrap">
-            <svg class="login-field-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="login-field-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
@@ -275,8 +298,8 @@
         <div class="login-field">
           <label for="login-password">Password</label>
           <div class="login-input-wrap">
-            <svg class="login-field-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="login-field-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
@@ -289,7 +312,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=10"></script>
 </body>
 
 </html>
