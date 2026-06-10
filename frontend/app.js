@@ -205,6 +205,48 @@ function initMap() {
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+  // ── Locate-me control ──────────────────────────────────────────
+  const LocateControl = L.Control.extend({
+    options: { position: 'bottomright' },
+    onAdd() {
+      const wrap = L.DomUtil.create('div', 'leaflet-bar');
+      const btn  = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
+      btn.id = 'ctrl-locate';
+      btn.title = 'Locate me';
+      btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+        <path d="M12 5a7 7 0 1 0 0 14A7 7 0 0 0 12 5z" opacity="0.25" stroke-width="1"/>
+      </svg>`;
+      L.DomEvent.disableClickPropagation(wrap);
+      L.DomEvent.on(btn, 'click', locateMe);
+      return wrap;
+    }
+  });
+  new LocateControl().addTo(map);
+
+  // ── Warning control ────────────────────────────────────────────
+  const WarnControl = L.Control.extend({
+    options: { position: 'bottomright' },
+    onAdd() {
+      const wrap = L.DomUtil.create('div', 'leaflet-bar');
+      const btn  = L.DomUtil.create('button', 'map-ctrl-btn', wrap);
+      btn.id = 'ctrl-warn';
+      btn.title = 'Alerts';
+      btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>`;
+      L.DomEvent.disableClickPropagation(wrap);
+      L.DomEvent.on(btn, 'click', toggleWarningPanel);
+      return wrap;
+    }
+  });
+  new WarnControl().addTo(map);
+
   const savedState = localStorage.getItem('loraMapState');
   if (savedState) {
     try {
@@ -294,6 +336,7 @@ async function refresh() {
     renderGatewayList(gwData);
     renderNodeList(rdData);
     updateHeaderStats(gwData, rdData);
+    checkWarnings(rdData);  // ← warning system
 
     if (document.getElementById('tab-battery').classList.contains('active')) {
       updateBatteryChart();
@@ -305,6 +348,205 @@ async function refresh() {
     console.error('Poll failed:', e);
     document.getElementById('live-dot').classList.add('stale');
     document.getElementById('live-text').textContent = 'Disconnected';
+  }
+}
+
+/* ── Locate me ──────────────────────────────────────────────── */
+function locateMe() {
+  const btn = document.getElementById('ctrl-locate');
+  if (!navigator.geolocation) {
+    toast('Geolocation not supported by this browser', 'error');
+    return;
+  }
+  if (btn) btn.classList.add('locating');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      map.flyTo([pos.coords.latitude, pos.coords.longitude], 17, { duration: 1.4 });
+      if (btn) btn.classList.remove('locating');
+    },
+    () => {
+      toast('Could not get your location', 'error');
+      if (btn) btn.classList.remove('locating');
+    },
+    { timeout: 8000 }
+  );
+}
+
+/* ── Warning system ─────────────────────────────────────────── */
+const STALE_THRESH_SECS = 150;
+const BATTERY_WARN_PCT  = 20;
+let   activeWarnings    = [];   // [{ nodeId, nodeName, type, detail }]
+let   warnPulseTimer    = null;
+let   warningPanelOpen  = false;
+let   audioCtx          = null;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playWarnTone() {
+  try {
+    const ctx  = getAudioCtx();
+    const now  = ctx.currentTime;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(660, now + 0.12);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+    osc.start(now);
+    osc.stop(now + 0.45);
+  } catch (e) { /* audio blocked */ }
+}
+
+function formatStaleTime(secs) {
+  if (secs < 3600) return `${Math.floor(secs / 60)} min`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)} hr ${Math.floor((secs % 3600) / 60)} min`;
+  return `${Math.floor(secs / 86400)} d ${Math.floor((secs % 86400) / 3600)} hr`;
+}
+
+function checkWarnings(readings) {
+  // Deduplicate readings by node_id — keep latest per node
+  const byNode = {};
+  readings.forEach(r => {
+    if (!byNode[r.node_id] || new Date(r.timestamp) > new Date(byNode[r.node_id].timestamp))
+      byNode[r.node_id] = r;
+  });
+
+  const issues = [];
+  Object.values(byNode).forEach(r => {
+    const ageSecs = (Date.now() - new Date(r.timestamp + 'Z').getTime()) / 1000;
+    if (ageSecs >= STALE_THRESH_SECS) {
+      issues.push({
+        nodeId: r.node_id, nodeName: r.node_name,
+        type: 'stale',
+        detail: `No signal for ${formatStaleTime(ageSecs)}`,
+      });
+    }
+    if (r.battery_level != null && r.battery_level < BATTERY_WARN_PCT) {
+      issues.push({
+        nodeId: r.node_id, nodeName: r.node_name,
+        type: 'battery',
+        detail: `Battery critical: ${Math.round(r.battery_level)}%`,
+      });
+    }
+  });
+
+  const hadWarnings = activeWarnings.length > 0;
+  const hasWarnings = issues.length > 0;
+  activeWarnings = issues;
+
+  const btn = document.getElementById('ctrl-warn');
+  if (!btn) return;
+
+  if (hasWarnings) {
+    btn.classList.add('warn-active');
+    // Start pulse timer if not already running
+    if (!warnPulseTimer) {
+      warnPulseTimer = setInterval(() => {
+        const b = document.getElementById('ctrl-warn');
+        if (!b || !b.classList.contains('warn-active')) {
+          clearInterval(warnPulseTimer); warnPulseTimer = null; return;
+        }
+        b.classList.remove('warn-pulse');
+        void b.offsetWidth; // reflow
+        b.classList.add('warn-pulse');
+        playWarnTone();
+      }, 5000);
+      // Fire immediately on first warning
+      if (!hadWarnings) {
+        btn.classList.add('warn-pulse');
+        playWarnTone();
+      }
+    }
+  } else {
+    btn.classList.remove('warn-active', 'warn-pulse');
+    if (warnPulseTimer) { clearInterval(warnPulseTimer); warnPulseTimer = null; }
+    // Auto-close panel if all issues resolved
+    if (warningPanelOpen) closeWarningPanel();
+  }
+
+  // Refresh panel content if open
+  if (warningPanelOpen) renderWarningPanel();
+}
+
+function toggleWarningPanel() {
+  if (warningPanelOpen) { closeWarningPanel(); return; }
+  openWarningPanel();
+}
+
+function openWarningPanel() {
+  warningPanelOpen = true;
+  // Stop pulse animation while panel is open
+  const btn = document.getElementById('ctrl-warn');
+  if (btn) btn.classList.remove('warn-pulse');
+  renderWarningPanel();
+}
+
+function closeWarningPanel() {
+  warningPanelOpen = false;
+  const panel = document.getElementById('warn-panel');
+  if (panel) panel.remove();
+}
+
+function renderWarningPanel() {
+  let panel = document.getElementById('warn-panel');
+  let isNew = false;
+
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'warn-panel';
+    panel.className = 'warn-panel';
+    isNew = true;
+  }
+
+  if (activeWarnings.length === 0) {
+    panel.innerHTML = `
+      <div class="warn-panel-header">
+        <span class="warn-panel-title">System Alerts</span>
+        <button class="warn-panel-close" onclick="closeWarningPanel()">✕</button>
+      </div>
+      <div class="warn-panel-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" width="24" height="24">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        All systems normal
+      </div>`;
+  } else {
+    const rows = activeWarnings.map(w => {
+      const icon = w.type === 'stale'
+        ? `<svg class="warn-row-icon stale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+             <line x1="2" y1="2" x2="22" y2="22"/><path d="M18 20V5"/><path d="M13 20v-8"/><path d="M8 20v-4"/></svg>`
+        : `<svg class="warn-row-icon battery" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+             <rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="13" x2="23" y2="11"/></svg>`;
+      return `
+        <div class="warn-row">
+          ${icon}
+          <div class="warn-row-info">
+            <div class="warn-row-name">${escHtml(w.nodeName)}</div>
+            <div class="warn-row-detail">${escHtml(w.detail)}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <div class="warn-panel-header">
+        <span class="warn-panel-title">⚠ ${activeWarnings.length} Alert${activeWarnings.length > 1 ? 's' : ''}</span>
+        <button class="warn-panel-close" onclick="closeWarningPanel()">✕</button>
+      </div>
+      <div class="warn-panel-list">${rows}</div>`;
+  }
+
+  if (isNew) {
+    // Attach panel above the warning button
+    const mapEl = document.getElementById('map');
+    mapEl.appendChild(panel);
   }
 }
 
